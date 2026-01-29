@@ -41,7 +41,6 @@ public class Teleop extends LinearOpMode {
     //Servo rotator = null;
     //Servo grabber = null;
     //Servo grabber_tilt = null;
-    Servo sweeper = null;
     //TouchSensor touch = null;
 
     /*
@@ -76,21 +75,24 @@ public class Teleop extends LinearOpMode {
     private static final double STEP_INCHES = 1;
     private static final int TICKS_PER_INCH = 20;
 
-    private DcMotor rightFly = null;
-    private DcMotor leftFly = null;
     private DcMotor frontLeft = null;
     private DcMotor frontRight = null;
     private DcMotor backLeft = null;
     private DcMotor backRight = null;
-    private boolean sweeperExtent = false;
-    private double sweeper_starttime = 0;
-    private boolean tiltDown = false;
-    private double tiltdown_starttime = 0;
-    private boolean processSampleHighBasket = false;
-    private double processSampleHighBasket_starttime = 0;
-    private boolean processSampleLowBasket = false;
-    private double processSampleLowBasket_starttime = 0;
 
+    private DcMotor Fly = null;
+    private DcMotor Intake = null;
+    private Servo Feeder = null;
+    private Servo Indexer = null;
+
+
+    private double Feedermin = 1;
+    private double Feedermax = 0.5;
+
+    private double Indexerhome = 0;
+    private double Indexamount = 0.16666;
+    private double Index = Indexerhome;
+    private boolean mode = false;
 
 
     @Override
@@ -111,28 +113,16 @@ public class Teleop extends LinearOpMode {
         backLeft = hardwareMap.dcMotor.get("bl");
         backRight = hardwareMap.dcMotor.get("br");
 
-        rightFly = hardwareMap.dcMotor.get("rightFly");
-        /*
-        rightFly.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-        rightFly.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
-        rightFly.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        Fly = hardwareMap.dcMotor.get("Fly");
+        Intake = hardwareMap.dcMotor.get("Intake");
+        Feeder = hardwareMap.servo.get("Feeder");
+        Indexer = hardwareMap.servo.get("Indexer");
 
-         */
-        rightFly.setPower(0);
+        Intake.setDirection(DcMotorSimple.Direction.REVERSE);
+        Feeder.setPosition(Feedermin);
+        Indexer.setPosition(Indexerhome);
 
-        leftFly = hardwareMap.dcMotor.get("leftFly");
-        /*
-        leftFly.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-        leftFly.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
-        leftFly.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
 
-         */
-        leftFly.setPower(0);
-
-        rightFly.setDirection(DcMotorSimple.Direction.REVERSE);
-
-        sweeper = hardwareMap.servo.get("lever");
-        sweeper.setPosition(0.8);
 
         /*
         DcMotor lifter = hardwareMap.dcMotor.get("lifter");
@@ -147,6 +137,9 @@ public class Teleop extends LinearOpMode {
         frontRight.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
         backLeft.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
         backRight.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+
+        Fly.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+        Intake.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
 
         backRight.setDirection(DcMotorSimple.Direction.REVERSE);;
         frontRight.setDirection(DcMotorSimple.Direction.REVERSE);;
@@ -163,8 +156,8 @@ public class Teleop extends LinearOpMode {
         grabberTilt.setPosition(BotCoefficients.grabberUp);
 
          */
-        boolean flytoggle = false;
-        double sweeperstarttime = -10000;
+        telemetry.addData(">","ready");
+        telemetry.update();
         waitForStart();
 
         while (!isStopRequested()) {
@@ -202,52 +195,33 @@ public class Teleop extends LinearOpMode {
             blPower = blPower / scaling;
             brPower = brPower / scaling;
             setDrivePower(flPower, frPower, blPower, brPower);
-            /*
-            rightFly.setPower(-gamepad1.left_trigger);
-            leftFly.setPower(-gamepad1.left_trigger);
 
-            if (gamepad1.a || gamepad2.a){
-                rightFly.setPower(-0.8);
-                leftFly.setPower(-0.8);
-            }
-            if (gamepad1.b || gamepad2.b){
-                rightFly.setPower(0);
-                leftFly.setPower(0);
-            }
-            */
-            if (gamepad1.a || gamepad1.x){
-                flytoggle = true;
-            }
-            if (gamepad1.b){
-                flytoggle = false;
-            }
-            if (flytoggle) {
-                if (gamepad1.a) {
-                    rightFly.setPower(-0.8);
-                    leftFly.setPower(-0.8);
-                }
-                else {
-                    rightFly.setPower(-0.7);
-                    leftFly.setPower(-0.7);
-                }
-            } else if (!flytoggle) {
-                rightFly.setPower(0);
-                leftFly.setPower(0);
-            }
+            //
             if (gamepad1.left_trigger >= 0.05) {
-                rightFly.setPower(-gamepad1.left_trigger);
-                leftFly.setPower(-gamepad1.left_trigger);
-                flytoggle = false;
+                Intake.setPower(gamepad1.left_trigger);
+                mode = false;
+            } else {
+                Intake.setPower(0);
+            }
+            if (gamepad1.right_trigger >= 0.05) {
+                Fly.setPower(gamepad1.right_trigger);
+            } else {
+                Fly.setPower(0);
             }
             if (gamepad1.right_bumper) {
-                sweeperstarttime = runtime.milliseconds();
-
-            }
-            if (runtime.milliseconds() - sweeperstarttime >= 600) {
-                sweeper.setPosition(0.8);
+                Feeder.setPosition(Feedermax);
+                mode = true;
             } else {
-                sweeper.setPosition(0.1);
+                Feeder.setPosition(Feedermin);
             }
+            if (gamepad1.right_stick_y >= 0.1) {
+                Index = Index + Indexamount;
+            } else if (gamepad1.right_stick_y <= -0.1) {
+                Index = Index - Indexamount;
+            }
+
+
+
 
 
 
