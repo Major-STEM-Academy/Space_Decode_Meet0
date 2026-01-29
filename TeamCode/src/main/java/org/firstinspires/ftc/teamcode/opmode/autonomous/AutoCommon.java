@@ -15,6 +15,7 @@ import org.firstinspires.ftc.robotcore.external.hardware.camera.BuiltinCameraDir
 import org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.AngularVelocity;
+import org.firstinspires.ftc.robotcore.external.navigation.Pose3D;
 import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
 //import org.firstinspires.ftc.robotcore.external.tfod.Recognition;
 import org.firstinspires.ftc.vision.VisionPortal;
@@ -37,10 +38,13 @@ public abstract class AutoCommon extends LinearOpMode {
 
     //protected DcMotor         rotator  = null;
     //linear slider
-    protected DcMotor rightFly = null;
-    protected DcMotor leftFly = null;
-
-    public Servo sweeper = null;
+    //motors
+    protected DcMotor Fly = null;
+    protected DcMotor Intake = null;
+    protected Servo Feeder = null;
+    protected Servo Indexer = null;
+    
+    
     protected ElapsedTime     runtime = new ElapsedTime();
 
     // For motot encoders
@@ -94,6 +98,14 @@ public abstract class AutoCommon extends LinearOpMode {
     protected VisionPortal visionPortal;
 
     protected AprilTagProcessor aprilTag;
+    
+    protected double feedermin = 0;
+    protected double feedermax = 1;
+    protected double Indexermin = 0;
+    protected double Indexermax = 1;
+    protected double Indexerhome = 0;
+    protected double Indexamount = (Indexermax - Indexermin)/6;
+    protected double Index = Indexerhome;
 
     // servo to place pixel on backboard
 
@@ -105,10 +117,10 @@ public abstract class AutoCommon extends LinearOpMode {
         //initSensors();
     }
     public void initServo() {
-        sweeper = hardwareMap.servo.get("lever");
-        sweeper.setPosition(0.8);
-
-        sleep(1000);
+        Feeder = hardwareMap.servo.get("Feeder");
+        Indexer = hardwareMap.servo.get("Indexer");
+        Feeder.setPosition(feedermin);
+        Indexer.setPosition(Indexerhome);
     }
     public void initMotor(){
         // Initialize the drive system variables.
@@ -134,12 +146,10 @@ public abstract class AutoCommon extends LinearOpMode {
         initFlyWheel();
     }
     public void initFlyWheel() {
-        rightFly = hardwareMap.dcMotor.get("rightFly");
-        rightFly.setPower(0);
-        rightFly.setDirection(DcMotorSimple.Direction.REVERSE);
-
-        leftFly = hardwareMap.dcMotor.get("leftFly");
-        leftFly.setPower(0);
+        Fly = hardwareMap.dcMotor.get("Fly");
+        Fly.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+        Intake = hardwareMap.dcMotor.get("Intake");
+        Fly.setPower(0);
     }
 
     public void strafe_encoder(double speed,
@@ -402,7 +412,7 @@ public abstract class AutoCommon extends LinearOpMode {
     public void initIMU(){
         // Initialize IMU in the control hub
         RevHubOrientationOnRobot.LogoFacingDirection logoDirection = RevHubOrientationOnRobot.LogoFacingDirection.LEFT;
-        RevHubOrientationOnRobot.UsbFacingDirection  usbDirection  = RevHubOrientationOnRobot.UsbFacingDirection.BACKWARD;
+        RevHubOrientationOnRobot.UsbFacingDirection  usbDirection  = RevHubOrientationOnRobot.UsbFacingDirection.DOWN;
         RevHubOrientationOnRobot orientationOnRobot = new RevHubOrientationOnRobot(logoDirection, usbDirection);
         imu = hardwareMap.get(IMU.class, "imu");
         imu.initialize(new IMU.Parameters(orientationOnRobot));
@@ -417,9 +427,89 @@ public abstract class AutoCommon extends LinearOpMode {
 
     }
 
+    public Integer IMUdirection() {
+        initIMU();
+        return (int) orientation0.getRoll(AngleUnit.DEGREES);
+    }
+
     public double getCurrentYaw() {
         return imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES);
     }
+
+    /**
+     * Drive to a specific position and angle relative to an AprilTag using Limelight data.
+     * @param limelight The Limelight3A object
+     * @param targetX Desired X position in robot-centric or target-centric space (e.g. tx error or Pose3D.x)
+     * @param targetY Desired Y position
+     * @param targetYaw Desired relative angle (using tx or IMU)
+     * @param speed Maximum motor power
+     * @param timeoutS Maximum time allowed for the move
+     * @param direction Multiplier for movement directions (1 or -1)
+     */
+    public void driveToLimelightPosition(Limelight3A limelight, double targetX, double targetY, double targetYaw, double speed, double timeoutS, int direction) {
+        // Proportional constants for P-controller
+        double kP_trans = 0.05;
+        double kP_turn = 0.02;
+        
+        runtime.reset();
+        while (opModeIsActive() && runtime.seconds() < timeoutS) {
+            LLResult result = limelight.getLatestResult();
+            
+            if (result != null && result.isValid()) {
+                // For turning, we can use the Limelight's tx directly (angle to target)
+                // If we want to face the target, our error is simply result.getTx()
+                // If we want to be at a specific targetYaw relative to the target, we adjust.
+                double currentTx = result.getTx();
+                double turnError = targetYaw - currentTx; // Simplified: aiming to get tx to targetYaw
+                
+                // For translation (X and Y), we can use result.getTy() for distance 
+                // or result.getBotpose_TargetSpace() if AprilTags are configured for 3D.
+                // Here we'll use tx and ty proportionally as "X and Y like limelight output"
+                double currentTy = result.getTy();
+                
+                double errorX = targetX - currentTx;
+                double errorY = targetY - currentTy;
+
+                // Stop if we are within a reasonable tolerance
+                if (Math.abs(errorX) < 1.0 && Math.abs(errorY) < 1.0 && Math.abs(turnError) < 1.0) {
+                    break;
+                }
+
+                // Calculate basic mecanum powers
+                double drive = errorY * kP_trans * direction;
+                double strafe = errorX * kP_trans * direction;
+                double turn = turnError * kP_turn;
+
+                // Combine powers for mecanum drive
+                double fl = drive + strafe + turn;
+                double fr = drive - strafe - turn;
+                double bl = drive - strafe + turn;
+                double br = drive + strafe - turn;
+
+                // Normalize powers to stay within [ -speed, speed ]
+                double max = Math.max(Math.abs(fl), Math.max(Math.abs(fr), Math.max(Math.abs(bl), Math.abs(br))));
+                if (max > speed) {
+                    fl = (fl / max) * speed;
+                    fr = (fr / max) * speed;
+                    bl = (bl / max) * speed;
+                    br = (br / max) * speed;
+                }
+
+                frontleftDrive.setPower(fl);
+                frontrightDrive.setPower(fr);
+                backleftDrive.setPower(bl);
+                backrightDrive.setPower(br);
+                
+                telemetry.addData("Limelight Error", "X:%.2f, Y:%.2f, Turn:%.2f", errorX, errorY, turnError);
+            } else {
+                // If target lost, stop for safety or keep trying until timeout
+                stopRobot();
+            }
+            telemetry.update();
+        }
+        stopRobot();
+    }
+
     private void driveStrafe(int flTarget, int blTarget, int frTarget, int brTarget,
                              double power,
                              boolean bKeepYaw, double targetYaw){
